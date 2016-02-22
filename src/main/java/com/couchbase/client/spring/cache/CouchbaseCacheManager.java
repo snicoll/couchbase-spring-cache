@@ -19,12 +19,10 @@ package com.couchbase.client.spring.cache;
 import org.springframework.cache.Cache;
 import org.springframework.cache.support.AbstractCacheManager;
 
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
-import java.util.Map;
+import java.util.*;
 
 import com.couchbase.client.java.Bucket;
+import org.springframework.util.CollectionUtils;
 
 /**
  * The {@link CouchbaseCacheManager} orchestrates {@link CouchbaseCache} instances.
@@ -35,47 +33,54 @@ import com.couchbase.client.java.Bucket;
  * @author Michael Nitschinger
  * @author Simon Baslé
  * @author Konrad Król
+ * @author Stephane Nicoll
  */
 public class CouchbaseCacheManager extends AbstractCacheManager {
 
-  /**
-   * Holds the reference to all stored {@link Bucket} cache connections.
-   */
-  private final Map<String, Bucket> clients;
-  
-  /**
-   * Holds the TTL configuration for each cache.
-   */
-  private final Map<String, Integer> ttlConfiguration;
+  private final Bucket defaultBucket;
 
-  /**
-   * Construct a new CouchbaseCacheManager.
-   *
-   * @param clients one ore more {@link Bucket} to reference.
-   */
-  public CouchbaseCacheManager(final Map<String, Bucket> clients) {
-    this.clients = clients;
-    this.ttlConfiguration = new HashMap<String, Integer>();
+  private boolean dynamic = true;
+
+  private int defaultTtl = 0;
+
+  private Map<String, Bucket> clients = new LinkedHashMap<String, Bucket>();
+
+  public CouchbaseCacheManager(Bucket defaultBucket, Collection<String> cacheNames) {
+    this.defaultBucket = defaultBucket;
+    Set<String> names = CollectionUtils.isEmpty(cacheNames) ? Collections.<String> emptySet()
+            : new HashSet<String>(cacheNames);
+    this.dynamic = names.isEmpty();
+    for (String name : names) {
+      clients.put(name, defaultBucket);
+    }
   }
-  
-  /**
-   * Construct a new CouchbaseCacheManager.
-   *
-   * @param clients one ore more {@link Bucket} to reference.
-   * @param ttlConfiguration one or more TTL values (in seconds)
-   */
-  public CouchbaseCacheManager(final Map<String, Bucket> clients, final Map<String, Integer> ttlConfiguration) {
-    this.clients = clients;
-    this.ttlConfiguration = ttlConfiguration;
+
+  public CouchbaseCacheManager(Bucket defaultBucket) {
+    this(defaultBucket, Collections.<String>emptyList());
   }
 
   /**
-   * Returns a Map of all registered {@link Bucket} with name.
-   *
-   * @return the underlying {@link Bucket} instances.
+   * Set the default Time To Live value for all caches created from that point
+   * forward.
    */
-  public final Map<String, Bucket> getClients() {
-    return clients;
+  public void setDefaultTtl(int defaultTtl) {
+    this.defaultTtl = defaultTtl;
+  }
+
+  public void addCache(String cacheName, int ttl) {
+    addCache(cacheName, ttl, defaultBucket);
+  }
+
+  public void addCache(String cacheName, int ttl, Bucket bucket) {
+    addCache(createCache(cacheName, ttl, bucket));
+  }
+
+  @Override
+  protected Cache getMissingCache(String name) {
+    if (this.dynamic) {
+      return createCache(name, defaultTtl, defaultBucket);
+    }
+    return null;
   }
 
   /**
@@ -88,20 +93,14 @@ public class CouchbaseCacheManager extends AbstractCacheManager {
     Collection<Cache> caches = new LinkedHashSet<Cache>();
 
     for (Map.Entry<String, Bucket> cache : clients.entrySet()) {
-      caches.add(new CouchbaseCache(cache.getKey(), cache.getValue(), getTtl(cache.getKey())));
+      caches.add(createCache(cache.getKey(),defaultTtl,  cache.getValue()));
     }
 
     return caches;
   }
-  
-  /**
-   * Returns TTL value for single cache
-   * @param name cache name
-   * @return either the cache TTL value or 0 as a default value
-   */
-  private int getTtl(String name) {
-      Integer expirationTime = ttlConfiguration.get(name);
-      return (expirationTime != null ? expirationTime : 0);
+
+  private CouchbaseCache createCache(String name, Integer ttl, Bucket bucket) {
+    return new CouchbaseCache(name, bucket, ttl);
   }
 
 }
